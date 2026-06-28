@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package mlservice;
+
+service MLInferenceService {
+  rpc Infer (InferenceRequest) returns (InferenceResult);
+}
+
+message InferenceRequest {
+  string        service_id     = 1;
+  repeated float feature_vector = 2;
+  string        window_id      = 3;
+  string        span_id        = 4;
+  string        trace_id       = 5;
+}
+
+message InferenceResult {
+  string  service_id    = 1;
+  float   anomaly_score = 2;
+  string  model_used    = 3;
+  bool    is_anomaly    = 4;
+  float   latency_ms    = 5;
+  string  anomaly_type  = 6;
+  float   reconstruction_error = 7;
+}

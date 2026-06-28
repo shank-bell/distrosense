@@ -1,0 +1,8 @@
+asyncio==3.4.3
+aiokafka==0.10.0
+confluent-kafka==2.3.0
+avro-python3==1.10.2
+numpy==1.26.4
+faker==24.0.0
+python-dotenv==1.0.1
+prometheus-client==0.20.0

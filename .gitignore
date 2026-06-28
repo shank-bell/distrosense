@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.env
+venv/
+env/
+.conda/
+
+# ML models (too large for git)
+*.pt
+*.pkl
+*.mar
+ml_service/torchserve/model_store/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/

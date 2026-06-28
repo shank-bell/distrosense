@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package telemetry;
+
+service TelemetryService {
+  rpc IngestSpanBatch (SpanBatch) returns (IngestResponse);
+}
+
+message Metric {
+  string name   = 1;
+  double value  = 2;
+}
+
+message Span {
+  string trace_id     = 1;
+  string span_id      = 2;
+  string service_id   = 3;
+  int64  timestamp    = 4;
+  repeated Metric metrics = 5;
+  string anomaly_type = 6;
+  bool   is_anomaly   = 7;
+}
+
+message SpanBatch {
+  repeated Span spans = 1;
+}
+
+message IngestResponse {
+  bool   success      = 1;
+  int32  spans_accepted = 2;
+  string message      = 3;
+}

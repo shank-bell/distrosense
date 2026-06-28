@@ -1,0 +1,17 @@
+{
+  "type": "record",
+  "name": "SpanBatch",
+  "namespace": "com.distrosense",
+  "fields": [
+    {"name": "trace_id",     "type": "string"},
+    {"name": "span_id",      "type": "string"},
+    {"name": "service_id",   "type": "string"},
+    {"name": "timestamp",    "type": "long"},
+    {"name": "cpu_percent",  "type": "double"},
+    {"name": "latency_p99",  "type": "double"},
+    {"name": "error_rate",   "type": "double"},
+    {"name": "request_rate", "type": "double"},
+    {"name": "anomaly_type", "type": ["null", "string"], "default": null},
+    {"name": "is_anomaly",   "type": "boolean", "default": false}
+  ]
+}
