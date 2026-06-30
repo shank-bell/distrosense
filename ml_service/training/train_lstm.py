@@ -9,7 +9,7 @@ from ml_service.config import LSTM_MODEL_PATH
 from pathlib import Path
 
 
-def train(epochs: int = 50, batch_size: int = 32, lr: float = 1e-3):
+def train(epochs: int = 60, batch_size: int = 32, lr: float = 1e-3):
     print("[TrainLSTM] Generating synthetic training data...")
     raw_data = generate_synthetic_data(n_services=20, n_steps=5000)
 
@@ -70,4 +70,4 @@ def train(epochs: int = 50, batch_size: int = 32, lr: float = 1e-3):
 
 
 if __name__ == "__main__":
-    train()
+    train(epochs=60)
