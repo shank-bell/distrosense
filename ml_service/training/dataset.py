@@ -3,25 +3,51 @@ import torch
 from torch.utils.data import Dataset
 from ml_service.config import LSTM_SEQUENCE_LEN, LSTM_NUM_FEATURES
 
+from scipy.signal import lfilter
+
+
+def _ar1_process(n_steps, rho, scale=1.0):
+    """
+    Generates an autocorrelated (AR(1)) noise series: x[t] = rho*x[t-1] + noise[t].
+    Using scipy's lfilter instead of a Python loop — this recursion is exactly
+    an IIR filter with coefficients a=[1, -rho], b=[1], so lfilter computes it
+    in vectorized C rather than looping 5000 times in Python per service.
+    """
+    noise = np.random.normal(0, scale, n_steps)
+    return lfilter([1.0], [1.0, -rho], noise)
+
 
 def generate_service_series(n_steps: int, inject_anomalies: bool = False,
-                             anomaly_duty_cycle: float = 0.05, burst_len: int = 15):
+                             anomaly_duty_cycle: float = 0.05, burst_len: int = 15,
+                             autocorr: float = 0.9, seasonal_period: int = 500,
+                             seasonal_amplitude: float = 0.3):
     """
-    anomaly_duty_cycle: the ACTUAL target fraction of time spent inside an
-    anomaly (e.g. 0.05 = 5%). This replaces the old anomaly_prob, which was
-    a per-step trigger chance — that number alone doesn't control the real
-    duty cycle once burst_len is factored in; this does the math to solve
-    for the correct per-step probability instead of guessing.
+    Adds the three realism components previously missing:
+    - autocorrelation: values carry over from the previous timestep instead
+      of being independently redrawn each step.
+    - seasonality: a slow sinusoidal "load" cycle underneath everything.
+    - cross-metric correlation: all four metrics are driven partly by one
+      shared "load" signal, so CPU/latency/errors move together instead of
+      being generated completely independently.
     """
-    cpu        = np.random.normal(40, 5, n_steps)
-    latency    = np.random.normal(120, 15, n_steps)
-    error_rate = np.random.normal(0.01, 0.002, n_steps)
-    req_rate   = np.random.normal(200, 20, n_steps)
+    t_axis = np.arange(n_steps)
+
+    # Shared load signal: seasonal cycle + autocorrelated random component
+    seasonal = seasonal_amplitude * np.sin(2 * np.pi * t_axis / seasonal_period)
+    load_noise = _ar1_process(n_steps, rho=autocorr, scale=1.0)
+    load_noise = load_noise / (np.std(load_noise) + 1e-9)
+    shared_load = seasonal + 0.5 * load_noise
+
+    # Each metric = baseline + its own sensitivity to the shared load
+    # + its own small autocorrelated idiosyncratic noise
+    cpu        = 40  + 8  * shared_load + _ar1_process(n_steps, rho=autocorr, scale=2.0)
+    latency    = 120 + 25 * shared_load + _ar1_process(n_steps, rho=autocorr, scale=6.0)
+    error_rate = 0.01 + 0.004 * shared_load + _ar1_process(n_steps, rho=autocorr, scale=0.0008)
+    req_rate   = 200 + 40 * shared_load + _ar1_process(n_steps, rho=autocorr, scale=8.0)
 
     anomaly_mask = np.zeros(n_steps, dtype=bool)
 
     if inject_anomalies:
-        # duty = burst_len / (1/p + burst_len)  =>  p = duty / (burst_len * (1 - duty))
         q = anomaly_duty_cycle
         p = q / (burst_len * (1 - q))
 
@@ -50,8 +76,6 @@ def generate_service_series(n_steps: int, inject_anomalies: bool = False,
 
     service_data = np.stack([cpu, latency, error_rate, req_rate], axis=1)
     return service_data, anomaly_mask
-
-
 def generate_synthetic_dataset(n_services: int = 100, n_steps: int = 5000,
                                 inject_anomalies: bool = False, anomaly_duty_cycle: float = 0.05):
     services, masks = [], []
