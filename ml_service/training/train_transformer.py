@@ -10,7 +10,8 @@ from ml_service.training.dataset import (
     generate_synthetic_dataset, chronological_split, MetricWindowDataset
 )
 from ml_service.config import (
-    TRANSFORMER_MODEL_PATH, TRANSFORMER_THRESHOLD_PATH, THRESHOLD_SIGMA_MULTIPLIER
+    TRANSFORMER_MODEL_PATH, TRANSFORMER_THRESHOLD_PATH,
+    TRANSFORMER_NORM_STATS_PATH, THRESHOLD_SIGMA_MULTIPLIER
 )
 
 
@@ -29,6 +30,13 @@ def train(epochs: int = 60, batch_size: int = 128, lr: float = 1e-3):
     train_concat = np.concatenate(train_services, axis=0)
     mean = train_concat.mean(axis=0)
     std  = train_concat.std(axis=0) + 1e-9
+
+    # Save normalization stats — needed by anything that evaluates or
+    # deploys this model later, since new data must be normalized with
+    # these exact same numbers, not recomputed from scratch.
+    Path(TRANSFORMER_NORM_STATS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with open(TRANSFORMER_NORM_STATS_PATH, "w") as f:
+        json.dump({"mean": mean.tolist(), "std": std.tolist()}, f, indent=2)
 
     train_services = normalize_services(train_services, mean, std)
     val_services   = normalize_services(val_services, mean, std)
@@ -85,7 +93,9 @@ def train(epochs: int = 60, batch_size: int = 128, lr: float = 1e-3):
     print(f"[TrainTransformer] Done. Best val_loss={best_val_loss:.4f} | Threshold={threshold:.4f}")
 
     print("[TrainTransformer] Checking anomaly separation on a labeled eval set...")
-    eval_services, eval_masks = generate_synthetic_dataset(n_services=10, n_steps=2000, inject_anomalies=True)
+    eval_services, eval_masks = generate_synthetic_dataset(
+        n_services=10, n_steps=2000, inject_anomalies=True, anomaly_duty_cycle=0.05
+    )
     eval_services = normalize_services(eval_services, mean, std)
     eval_ds = MetricWindowDataset(eval_services, mask_list=eval_masks)
 

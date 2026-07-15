@@ -4,15 +4,14 @@ from torch.utils.data import Dataset
 from ml_service.config import LSTM_SEQUENCE_LEN, LSTM_NUM_FEATURES
 
 
-def generate_service_series(n_steps: int, inject_anomalies: bool = False, anomaly_prob: float = 0.05):
+def generate_service_series(n_steps: int, inject_anomalies: bool = False,
+                             anomaly_duty_cycle: float = 0.05, burst_len: int = 15):
     """
-    Generates one service's metric series.
-    If inject_anomalies=True, randomly injects short anomaly bursts
-    (cpu_spike / latency_burst / error_spike / request_drop — same four
-    types as the Phase 1 simulator).
-    Returns (data, anomaly_mask) — anomaly_mask[i]=True if timestep i
-    falls inside an injected burst. Used for building a LABELED eval
-    set, not for the main training set (autoencoder trains on normal only).
+    anomaly_duty_cycle: the ACTUAL target fraction of time spent inside an
+    anomaly (e.g. 0.05 = 5%). This replaces the old anomaly_prob, which was
+    a per-step trigger chance — that number alone doesn't control the real
+    duty cycle once burst_len is factored in; this does the math to solve
+    for the correct per-step probability instead of guessing.
     """
     cpu        = np.random.normal(40, 5, n_steps)
     latency    = np.random.normal(120, 15, n_steps)
@@ -22,10 +21,13 @@ def generate_service_series(n_steps: int, inject_anomalies: bool = False, anomal
     anomaly_mask = np.zeros(n_steps, dtype=bool)
 
     if inject_anomalies:
+        # duty = burst_len / (1/p + burst_len)  =>  p = duty / (burst_len * (1 - duty))
+        q = anomaly_duty_cycle
+        p = q / (burst_len * (1 - q))
+
         t = 0
-        burst_len = 15
         while t < n_steps - burst_len:
-            if np.random.random() < anomaly_prob:
+            if np.random.random() < p:
                 kind = np.random.choice(["cpu_spike", "latency_burst", "error_spike", "request_drop"])
                 end = t + burst_len
                 if kind == "cpu_spike":
@@ -50,19 +52,16 @@ def generate_service_series(n_steps: int, inject_anomalies: bool = False, anomal
     return service_data, anomaly_mask
 
 
-def generate_synthetic_dataset(n_services: int = 100, n_steps: int = 5000, inject_anomalies: bool = False):
-    """
-    Returns a LIST of per-service arrays (not concatenated).
-    Keeping services separate is what prevents windows from ever
-    blending two unrelated services at the boundary.
-    """
+def generate_synthetic_dataset(n_services: int = 100, n_steps: int = 5000,
+                                inject_anomalies: bool = False, anomaly_duty_cycle: float = 0.05):
     services, masks = [], []
     for _ in range(n_services):
-        data, mask = generate_service_series(n_steps, inject_anomalies=inject_anomalies)
+        data, mask = generate_service_series(
+            n_steps, inject_anomalies=inject_anomalies, anomaly_duty_cycle=anomaly_duty_cycle
+        )
         services.append(data)
         masks.append(mask)
     return services, masks
-
 
 def chronological_split(service_list, val_fraction: float = 0.2):
     """
