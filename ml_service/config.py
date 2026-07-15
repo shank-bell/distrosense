@@ -35,3 +35,5 @@ MODEL_DIR         = os.path.join(os.path.dirname(__file__), "torchserve", "model
 LSTM_MODEL_PATH   = os.path.join(MODEL_DIR, "lstm_autoencoder.pt")
 IFOREST_MODEL_PATH = os.path.join(MODEL_DIR, "iso_forest.pkl")
 THRESHOLD_PATH    = os.path.join(MODEL_DIR, "threshold.json")
+TRANSFORMER_MODEL_PATH     = os.path.join(MODEL_DIR, "transformer_autoencoder.pt")
+TRANSFORMER_THRESHOLD_PATH = os.path.join(MODEL_DIR, "transformer_threshold.json")

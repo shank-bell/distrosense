@@ -4,48 +4,107 @@ from torch.utils.data import Dataset
 from ml_service.config import LSTM_SEQUENCE_LEN, LSTM_NUM_FEATURES
 
 
+def generate_service_series(n_steps: int, inject_anomalies: bool = False, anomaly_prob: float = 0.05):
+    """
+    Generates one service's metric series.
+    If inject_anomalies=True, randomly injects short anomaly bursts
+    (cpu_spike / latency_burst / error_spike / request_drop — same four
+    types as the Phase 1 simulator).
+    Returns (data, anomaly_mask) — anomaly_mask[i]=True if timestep i
+    falls inside an injected burst. Used for building a LABELED eval
+    set, not for the main training set (autoencoder trains on normal only).
+    """
+    cpu        = np.random.normal(40, 5, n_steps)
+    latency    = np.random.normal(120, 15, n_steps)
+    error_rate = np.random.normal(0.01, 0.002, n_steps)
+    req_rate   = np.random.normal(200, 20, n_steps)
+
+    anomaly_mask = np.zeros(n_steps, dtype=bool)
+
+    if inject_anomalies:
+        t = 0
+        burst_len = 15
+        while t < n_steps - burst_len:
+            if np.random.random() < anomaly_prob:
+                kind = np.random.choice(["cpu_spike", "latency_burst", "error_spike", "request_drop"])
+                end = t + burst_len
+                if kind == "cpu_spike":
+                    cpu[t:end] += np.random.uniform(30, 50)
+                elif kind == "latency_burst":
+                    latency[t:end] += np.random.uniform(100, 300)
+                elif kind == "error_spike":
+                    error_rate[t:end] += np.random.uniform(0.1, 0.3)
+                elif kind == "request_drop":
+                    req_rate[t:end] *= np.random.uniform(0.1, 0.3)
+                anomaly_mask[t:end] = True
+                t = end
+            else:
+                t += 1
+
+    cpu        = np.clip(cpu, 0, 100)
+    latency    = np.clip(latency, 0, None)
+    error_rate = np.clip(error_rate, 0, 1)
+    req_rate   = np.clip(req_rate, 0, None)
+
+    service_data = np.stack([cpu, latency, error_rate, req_rate], axis=1)
+    return service_data, anomaly_mask
+
+
+def generate_synthetic_dataset(n_services: int = 100, n_steps: int = 5000, inject_anomalies: bool = False):
+    """
+    Returns a LIST of per-service arrays (not concatenated).
+    Keeping services separate is what prevents windows from ever
+    blending two unrelated services at the boundary.
+    """
+    services, masks = [], []
+    for _ in range(n_services):
+        data, mask = generate_service_series(n_steps, inject_anomalies=inject_anomalies)
+        services.append(data)
+        masks.append(mask)
+    return services, masks
+
+
+def chronological_split(service_list, val_fraction: float = 0.2):
+    """
+    Splits each service's OWN timeline at the (1 - val_fraction) mark —
+    first part -> train, last part -> val. Done per-service, before
+    windowing, so no window ever crosses the train/val boundary, and
+    (combined with per-service windowing below) none crosses a service
+    boundary either. Replaces the old random_split, which shuffled
+    overlapping windows and leaked near-duplicates across the split.
+    """
+    train_services, val_services = [], []
+    for data in service_list:
+        split_idx = int(len(data) * (1 - val_fraction))
+        train_services.append(data[:split_idx])
+        val_services.append(data[split_idx:])
+    return train_services, val_services
+
+
 class MetricWindowDataset(Dataset):
     """
-    Builds sliding window dataset for LSTM training.
-    Each sample is a (seq_len, num_features) tensor.
-    LLD: seq_len=60, features=[cpu, latency, error_rate, request_rate]
+    Builds sliding windows PER SERVICE from a list of per-service arrays
+    — a window is never built across two different services.
+    Pass mask_list to also get a per-window anomaly label (for the
+    labeled eval set); omit it for plain training data.
     """
-    def __init__(self, data: np.ndarray, seq_len: int = LSTM_SEQUENCE_LEN):
+    def __init__(self, service_list, seq_len: int = LSTM_SEQUENCE_LEN, mask_list=None):
         self.seq_len = seq_len
-        self.windows = []
-        for i in range(len(data) - seq_len):
-            self.windows.append(data[i:i + seq_len])
-        self.windows = np.array(self.windows, dtype=np.float32)
+        windows, labels = [], []
+        for idx, data in enumerate(service_list):
+            mask = mask_list[idx] if mask_list is not None else None
+            for i in range(len(data) - seq_len):
+                windows.append(data[i:i + seq_len])
+                if mask is not None:
+                    labels.append(bool(mask[i:i + seq_len].any()))
+        self.windows = np.array(windows, dtype=np.float32)
+        self.labels = np.array(labels, dtype=bool) if mask_list is not None else None
 
     def __len__(self):
         return len(self.windows)
 
     def __getitem__(self, idx):
-        return torch.tensor(self.windows[idx], dtype=torch.float32)
-
-
-def generate_synthetic_data(
-    n_services: int = 10,
-    n_steps: int = 5000,
-) -> np.ndarray:
-    """
-    Generates synthetic normal metric data for LSTM training.
-    Used when real historical data isn't available.
-    """
-    data = []
-    for _ in range(n_services):
-        cpu        = np.random.normal(40, 5, n_steps)
-        latency    = np.random.normal(120, 15, n_steps)
-        error_rate = np.random.normal(0.01, 0.002, n_steps)
-        req_rate   = np.random.normal(200, 20, n_steps)
-
-        # Clip to realistic ranges
-        cpu        = np.clip(cpu, 0, 100)
-        latency    = np.clip(latency, 0, None)
-        error_rate = np.clip(error_rate, 0, 1)
-        req_rate   = np.clip(req_rate, 0, None)
-
-        service_data = np.stack([cpu, latency, error_rate, req_rate], axis=1)
-        data.append(service_data)
-
-    return np.concatenate(data, axis=0)
+        window = torch.tensor(self.windows[idx], dtype=torch.float32)
+        if self.labels is not None:
+            return window, bool(self.labels[idx])
+        return window
