@@ -28,12 +28,21 @@ IFOREST_N_ESTIMATORS  = 100
 IFOREST_CONTAMINATION = 0.05
 
 # LLD: is_anomaly if score > 0.7
-ANOMALY_SCORE_THRESHOLD = 0.7
+ANOMALY_SCORE_THRESHOLD = 0.7   
 
 # Model paths
 MODEL_DIR         = os.path.join(os.path.dirname(__file__), "torchserve", "model_store")
 LSTM_MODEL_PATH   = os.path.join(MODEL_DIR, "lstm_autoencoder.pt")
 IFOREST_MODEL_PATH = os.path.join(MODEL_DIR, "iso_forest.pkl")
 THRESHOLD_PATH    = os.path.join(MODEL_DIR, "threshold.json")
+TRANSFORMER_SEQUENCE_LEN    = 60
+TRANSFORMER_NUM_FEATURES    = 4
+TRANSFORMER_D_MODEL         = 32
+TRANSFORMER_N_HEADS         = 4
+TRANSFORMER_N_LAYERS        = 2
+TRANSFORMER_DIM_FEEDFORWARD = 64
+TRANSFORMER_DROPOUT         = 0.1
+TRANSFORMER_DECODER_HIDDEN1 = 128
+TRANSFORMER_DECODER_HIDDEN2 = 256
 TRANSFORMER_MODEL_PATH     = os.path.join(MODEL_DIR, "transformer_autoencoder.pt")
 TRANSFORMER_THRESHOLD_PATH = os.path.join(MODEL_DIR, "transformer_threshold.json")
