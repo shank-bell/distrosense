@@ -267,8 +267,3 @@ python -m simulator.main
 ```
 
 ---
-
-## Author
-
-Built by Harshith Venkatesha — Creative Lead & ML Engineer
-Behance: [behance.net/harshitvenkate6](https://behance.net/harshitvenkate6)
