@@ -2,6 +2,7 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
 
 from ml_service.models.transformer_autoencoder import TransformerAutoencoder
 from ml_service.models.anomaly_debouncer import AnomalyDebouncer
@@ -12,7 +13,15 @@ from ml_service.config import (
 )
 
 
-def test_debounce(persistence_windows: int = 3):
+def compute_eval_errors(seed: int = 42):
+    """
+    Runs the model once over a FIXED, seeded eval set and returns the
+    raw (error, is_anomaly) trace per service, in time order. Computing
+    this once and reusing it for every persistence_windows value is what
+    makes the sweep fair — otherwise each setting would be tested against
+    different random data, and differences in the results could just be
+    data noise, not the debounce setting itself.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = TransformerAutoencoder().to(device)
@@ -26,8 +35,7 @@ def test_debounce(persistence_windows: int = 3):
     mean = np.array(stats["mean"])
     std  = np.array(stats["std"])
 
-    print(f"[TestDebounce] threshold={threshold:.4f}, persistence_windows={persistence_windows}")
-
+    np.random.seed(seed)
     services, masks = generate_synthetic_dataset(
         n_services=10, n_steps=2000, inject_anomalies=True, anomaly_duty_cycle=0.05
     )
@@ -35,43 +43,57 @@ def test_debounce(persistence_windows: int = 3):
     criterion = nn.MSELoss()
     seq_len = TRANSFORMER_SEQUENCE_LEN
 
-    raw_tp = raw_fp = raw_fn = raw_tn = 0
-    deb_tp = deb_fp = deb_fn = deb_tn = 0
-
+    traces = []
     for data, mask in zip(services, masks):
         data = (data - mean) / std
-        debouncer = AnomalyDebouncer(threshold=threshold, persistence_windows=persistence_windows)
-
-        # Walk windows IN TIME ORDER, one service at a time — debounce
-        # only makes sense against a real chronological sequence.
+        trace = []
         for i in range(len(data) - seq_len):
             window = data[i:i + seq_len]
             is_anomaly = bool(mask[i:i + seq_len].any())
-
             window_t = torch.tensor(window, dtype=torch.float32).unsqueeze(0).to(device)
             with torch.no_grad():
                 error = criterion(model(window_t), window_t).item()
+            trace.append((error, is_anomaly))
+        traces.append(trace)
 
-            raw_alert = error > threshold
-            confirmed = debouncer.check(error)
+    return traces, threshold
 
-            if is_anomaly:
-                raw_tp += raw_alert; raw_fn += not raw_alert
-                deb_tp += confirmed; deb_fn += not confirmed
-            else:
-                raw_fp += raw_alert; raw_tn += not raw_alert
-                deb_fp += confirmed; deb_tn += not confirmed
 
-    def summarize(label, tp, fp, fn, tn):
-        recall    = tp / (tp + fn) if (tp + fn) else float("nan")
-        precision = tp / (tp + fp) if (tp + fp) else float("nan")
-        fpr       = fp / (fp + tn) if (fp + tn) else float("nan")
-        print(f"[{label}] TP={tp} FP={fp} FN={fn} TN={tn} | "
-              f"recall={recall:.4f} precision={precision:.4f} false_alarm_rate={fpr:.4f}")
+def evaluate(traces, threshold, persistence_windows: int):
+    y_true, y_pred_raw, y_pred_deb = [], [], []
+    for trace in traces:
+        debouncer = AnomalyDebouncer(threshold=threshold, persistence_windows=persistence_windows)
+        for error, is_anomaly in trace:
+            y_true.append(int(is_anomaly))
+            y_pred_raw.append(int(error > threshold))
+            y_pred_deb.append(int(debouncer.check(error)))
 
-    summarize("RAW (no debounce)", raw_tp, raw_fp, raw_fn, raw_tn)
-    summarize("DEBOUNCED", deb_tp, deb_fp, deb_fn, deb_tn)
+    def summarize(y_pred):
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            y_true, y_pred, average="binary", zero_division=0
+        )
+        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        return tp, fp, fn, tn, precision, recall, f1
+
+    return summarize(y_pred_raw), summarize(y_pred_deb)
+
+
+def sweep(persistence_values=(2, 3, 4, 5)):
+    print("[Sweep] Running model once over a fixed eval set...")
+    traces, threshold = compute_eval_errors()
+    print(f"[Sweep] threshold={threshold:.4f}")
+
+    raw_result = None
+    for pw in persistence_values:
+        raw_result, deb_result = evaluate(traces, threshold, pw)
+        tp, fp, fn, tn, precision, recall, f1 = deb_result
+        print(f"[persistence_windows={pw}] TP={tp} FP={fp} FN={fn} TN={tn} | "
+              f"precision={precision:.4f} recall={recall:.4f} f1={f1:.4f}")
+
+    tp, fp, fn, tn, precision, recall, f1 = raw_result
+    print(f"[RAW, no debounce] TP={tp} FP={fp} FN={fn} TN={tn} | "
+          f"precision={precision:.4f} recall={recall:.4f} f1={f1:.4f}")
 
 
 if __name__ == "__main__":
-    test_debounce(persistence_windows=3)
+    sweep(persistence_values=(2, 3, 4, 5))
