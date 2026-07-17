@@ -47,3 +47,4 @@ TRANSFORMER_DECODER_HIDDEN2 = 256
 TRANSFORMER_MODEL_PATH     = os.path.join(MODEL_DIR, "transformer_autoencoder.pt")
 TRANSFORMER_THRESHOLD_PATH = os.path.join(MODEL_DIR, "transformer_threshold.json")
 TRANSFORMER_NORM_STATS_PATH = os.path.join(MODEL_DIR, "transformer_norm_stats.json")
+DEBOUNCE_PERSISTANCE_WINDOWS = 2
