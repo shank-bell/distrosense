@@ -17,7 +17,7 @@ class KafkaPublisher:
         self._producer = AIOKafkaProducer(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
             value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-            compression_type="snappy",
+            compression_type="gzip",
             acks="all",
             enable_idempotence=True,
             linger_ms=5,

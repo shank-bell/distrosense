@@ -71,10 +71,19 @@ async def main():
         print("\n[Simulator] Shutting down...")
         stop_event.set()
 
-    loop.add_signal_handler(signal.SIGINT, shutdown)
-    loop.add_signal_handler(signal.SIGTERM, shutdown)
+    try:
+        loop.add_signal_handler(signal.SIGINT, shutdown)
+        loop.add_signal_handler(signal.SIGTERM, shutdown)
+    except NotImplementedError:
+        # Windows' asyncio event loop doesn't support add_signal_handler —
+        # Ctrl+C still works fine via the normal KeyboardInterrupt path below,
+        # this just skips the Unix-only signal handler registration.
+        pass
 
-    await stop_event.wait()
+    try:
+        await stop_event.wait()
+    except KeyboardInterrupt:
+        shutdown()
 
     for task in tasks:
         task.cancel()
