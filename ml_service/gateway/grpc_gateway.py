@@ -20,17 +20,11 @@ from ml_service.config import (
 
 class MLInferenceServicer(ml_service_pb2_grpc.MLInferenceServiceServicer):
     """
-    Transformer autoencoder is now the primary model (replaces LSTM entirely
-    — LSTM was never successfully trained, see project history).
-
-    Per service_id, maintains a rolling buffer of the last
-    TRANSFORMER_SEQUENCE_LEN real readings. The Transformer needs actual
-    history to detect temporal anomalies — feeding it repeated copies of
-    one reading (what the old LSTM code did) would defeat the entire
-    point of a model built on autocorrelation, so inference only runs
-    once a service has accumulated a full real window. Until then,
-    Isolation Forest (which only needs a single reading, not a window)
-    covers that service.
+    Transformer autoencoder is the primary model (replaces LSTM entirely).
+    Isolation Forest is the warmup-period fallback — it builds its 7-feature
+    statistical summary from whatever's in the per-service rolling buffer so
+    far (even just 1-2 readings), so warmup ticks get real coverage instead
+    of silently defaulting to "not anomalous".
     """
     def __init__(self):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,7 +64,6 @@ class MLInferenceServicer(ml_service_pb2_grpc.MLInferenceServiceServicer):
             print("[Gateway] Isolation Forest model not found — run training first")
             self._iforest = None
 
-        # Per-service rolling window buffer and debounce state
         self._buffers: dict[str, deque] = {}
         self._debouncers: dict[str, AnomalyDebouncer] = {}
 
@@ -87,6 +80,18 @@ class MLInferenceServicer(ml_service_pb2_grpc.MLInferenceServiceServicer):
             )
         return self._debouncers[service_id]
 
+    @staticmethod
+    def _buffer_to_metrics_window(buffer: deque) -> list[dict]:
+        return [
+            {
+                "cpu_percent":  row[0],
+                "latency_p99":  row[1],
+                "error_rate":   row[2],
+                "request_rate": row[3],
+            }
+            for row in buffer
+        ]
+
     def Infer(self, request, context):
         t_start = time.time()
 
@@ -97,12 +102,11 @@ class MLInferenceServicer(ml_service_pb2_grpc.MLInferenceServiceServicer):
         recon_error   = 0.0
         is_anomaly    = False
 
-        # Step 1: append this reading to the service's rolling buffer
         buffer = self._get_buffer(service_id)
         if len(features) >= TRANSFORMER_NUM_FEATURES:
             buffer.append(features[:TRANSFORMER_NUM_FEATURES])
 
-        # Step 2: Transformer, only once a full real window has built up
+        # Primary: Transformer, only once a full real window has built up
         if self._transformer is not None and len(buffer) == TRANSFORMER_SEQUENCE_LEN:
             try:
                 window = np.array(buffer, dtype=np.float32)
@@ -120,11 +124,14 @@ class MLInferenceServicer(ml_service_pb2_grpc.MLInferenceServiceServicer):
             except Exception as e:
                 print(f"[Gateway] Transformer inference error: {e}")
 
-        # Step 3: Isolation Forest fallback — covers services still
-        # building up their buffer, or if the Transformer errored above
-        if model_used == "NONE" and self._iforest is not None:
+        # Fallback: Isolation Forest — covers warmup ticks (buffer not yet
+        # full) using whatever real readings have accumulated so far, and
+        # covers any Transformer error above.
+        if model_used == "NONE" and self._iforest is not None and len(buffer) > 0:
             try:
-                anomaly_score = self._iforest.predict(features)
+                metrics_window = self._buffer_to_metrics_window(buffer)
+                feat = IsolationForestModel.extract_features(metrics_window)
+                anomaly_score = self._iforest.predict(feat)
                 model_used    = "ISOLATION_FOREST"
                 is_anomaly    = anomaly_score > 0.7
             except Exception as e:
