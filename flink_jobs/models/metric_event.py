@@ -17,15 +17,19 @@ class MetricEvent:
 
     @staticmethod
     def from_dict(d: dict) -> "MetricEvent":
+        # The simulator's spans nest all four readings under "metrics"
+        # (see trace_generator.py's generate_span) — this used to look
+        # for cpu_percent etc. at the top level and always got 0.0.
+        metrics = d.get("metrics", {})
         return MetricEvent(
             trace_id     = d.get("trace_id", ""),
             span_id      = d.get("span_id", ""),
             service_id   = d.get("service_id", ""),
             timestamp    = d.get("timestamp", 0),
-            cpu_percent  = d.get("cpu_percent", 0.0),
-            latency_p99  = d.get("latency_p99", 0.0),
-            error_rate   = d.get("error_rate", 0.0),
-            request_rate = d.get("request_rate", 0.0),
+            cpu_percent  = metrics.get("cpu_percent", 0.0),
+            latency_p99  = metrics.get("latency_p99", 0.0),
+            error_rate   = metrics.get("error_rate", 0.0),
+            request_rate = metrics.get("request_rate", 0.0),
             anomaly_type = d.get("anomaly_type"),
             is_anomaly   = d.get("is_anomaly", False),
         )

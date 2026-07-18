@@ -24,24 +24,31 @@ class TimescaleDBSink:
         self._conn.autocommit = False
         print("[TimescaleDBSink] Connected")
 
-    def write_metric(self, event: dict):
+    def write_metric(self, aggregate: dict):
+        """
+        Takes the FULL aggregate dict from MetricAggregationJob._flush_window
+        (one call per window, not four) and maps its keys to the metrics
+        table's (metric_name, value) rows. The old version received a
+        pre-subset dict per metric with mismatched key names and silently
+        wrote mostly-zero rows.
+        """
         sql = """
             INSERT INTO metrics
                 (time, service_id, metric_name, value, span_id, anomaly_score, is_anomaly)
             VALUES %s
             ON CONFLICT DO NOTHING
         """
-        rows = []
-        for metric_name in ["cpu_percent", "latency_p99", "error_rate", "request_rate"]:
-            rows.append((
-                event["timestamp_iso"],
-                event["service_id"],
-                metric_name,
-                event.get(metric_name, 0.0),
-                event.get("span_id"),
-                event.get("anomaly_score"),
-                event.get("is_anomaly", False),
-            ))
+        metric_map = {
+            "cpu_percent":  aggregate.get("cpu_mean"),
+            "latency_p99":  aggregate.get("latency_p99"),
+            "error_rate":   aggregate.get("error_rate_mean"),
+            "request_rate": aggregate.get("request_rate_mean"),
+        }
+        rows = [
+            (aggregate["timestamp_iso"], aggregate["service_id"], metric_name, value, None, None, False)
+            for metric_name, value in metric_map.items()
+            if value is not None
+        ]
         with self._conn.cursor() as cur:
             execute_values(cur, sql, rows)
         self._conn.commit()

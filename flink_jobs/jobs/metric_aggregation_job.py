@@ -102,17 +102,11 @@ class MetricAggregationJob:
             "span_count":        len(events),
         }
 
-        # Write to TimescaleDB
+        # Write to TimescaleDB — ONE call with the full aggregate. The old
+        # version looped over 4 metric names calling write_metric() 4 times
+        # with mismatched key names, silently writing mostly-zero rows.
         ts_iso = datetime.datetime.utcfromtimestamp(ts_ms / 1000).isoformat()
-        for metric_name in ["cpu_mean", "latency_p99", "error_rate_mean", "request_rate_mean"]:
-            self._tsdb_sink.write_metric({
-                "timestamp_iso": ts_iso,
-                "service_id":    service_id,
-                metric_name:     aggregate[metric_name],
-                "span_id":       None,
-                "anomaly_score": None,
-                "is_anomaly":    False,
-            })
+        self._tsdb_sink.write_metric({**aggregate, "timestamp_iso": ts_iso})
 
         # Write to aggregated-metrics topic
         self._kafka_sink.write_aggregate(aggregate)
