@@ -17,7 +17,7 @@ class KafkaSink:
             key_serializer=lambda k: k.encode("utf-8") if k else None,
             acks="all",
             enable_idempotence=True,
-            compression_type="snappy",
+            compression_type="gzip",
         )
         print("[KafkaSink] Connected")
 

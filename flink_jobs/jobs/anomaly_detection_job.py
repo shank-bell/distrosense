@@ -27,3 +27,5 @@ class AnomalyDetectionJob:
             t2.join()
         except KeyboardInterrupt:
             print("[AnomalyDetectionJob] Shutting down...")
+if __name__ == "__main__":
+    AnomalyDetectionJob().run()
