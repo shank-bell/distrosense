@@ -23,3 +23,14 @@ CREATE TABLE IF NOT EXISTS anomaly_events (
     correlated_incident_id UUID,
     resolved              BOOLEAN         DEFAULT FALSE
 );
+CREATE TABLE IF NOT EXISTS incidents (
+    id                     UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+    opened_at              TIMESTAMPTZ     NOT NULL,
+    closed_at              TIMESTAMPTZ,
+    root_cause_service_id  TEXT,
+    member_service_ids     TEXT[]          NOT NULL,
+    anomaly_count          INTEGER         NOT NULL,
+    severity               INTEGER         CHECK (severity BETWEEN 1 AND 5),
+    causality_method       TEXT            NOT NULL DEFAULT 'granger',
+    resolved               BOOLEAN         DEFAULT FALSE
+);
