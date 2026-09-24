@@ -1,17 +1,24 @@
 import random
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
-def build_cascade_map(service_ids: List[str]) -> Dict[str, List[str]]:
+def build_cascade_map(service_ids: List[str], seed: Optional[int] = None) -> Dict[str, List[str]]:
     """
     Builds a dependency map: if service A fails,
     these downstream services are also affected.
     Each service has 1-3 downstream dependents.
+
+    seed: if provided, uses a local Random instance so the map is
+    reproducible across process restarts. This matters starting Phase 6 —
+    the correlation engine's Neo4j graph and the simulator's cascade_map
+    must describe the same topology, so the map can no longer be
+    regenerated fresh (and different) on every run.
     """
+    rng = random.Random(seed) if seed is not None else random
     cascade_map = {}
     for svc_id in service_ids:
-        num_dependents = random.randint(1, 3)
-        dependents = random.sample(
+        num_dependents = rng.randint(1, 3)
+        dependents = rng.sample(
             [s for s in service_ids if s != svc_id],
             k=min(num_dependents, len(service_ids) - 1)
         )
