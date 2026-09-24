@@ -56,12 +56,14 @@ class TimescaleDBSink:
     def write_anomaly(self, anomaly: dict):
         sql = """
             INSERT INTO anomaly_events
-                (detected_at, service_id, anomaly_type, severity,
+                (id, detected_at, service_id, anomaly_type, severity,
                  model_used, reconstruction_error, resolved)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
         """
         with self._conn.cursor() as cur:
             cur.execute(sql, (
+                anomaly["id"],
                 anomaly["detected_at_iso"],
                 anomaly["service_id"],
                 anomaly["anomaly_type"],

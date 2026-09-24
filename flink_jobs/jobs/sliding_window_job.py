@@ -110,6 +110,7 @@ class SlidingWindowJob:
                 # Write to TimescaleDB
                 ts_iso = datetime.datetime.utcfromtimestamp(ts_ms / 1000).isoformat()
                 self._tsdb_sink.write_anomaly({
+                    "id":                  anomaly.id,
                     "detected_at_iso":     ts_iso,
                     "service_id":          service_id,
                     "anomaly_type":        anomaly_type,
