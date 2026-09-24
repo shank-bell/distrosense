@@ -6,6 +6,10 @@ from simulator.config import (
     EMIT_INTERVAL_SECONDS,
     ANOMALY_PROBABILITY,
     CASCADE_PROBABILITY,
+    CASCADE_SEED,
+    NEO4J_URI,
+    NEO4J_USER,
+    NEO4J_PASSWORD,
 )
 from simulator.services.service_registry import build_registry
 from simulator.services.cascade_map import build_cascade_map, get_affected_services
@@ -13,6 +17,7 @@ from simulator.generators.metric_generator import generate_metrics
 from simulator.generators.anomaly_injector import maybe_inject
 from simulator.generators.trace_generator import generate_span
 from simulator.publisher.kafka_publisher import KafkaPublisher
+from correlation.graph.neo4j_client import Neo4jClient
 
 
 async def run_service(
@@ -50,7 +55,17 @@ async def main():
 
     registry = build_registry()
     service_ids = list(registry.keys())
-    cascade_map = build_cascade_map(service_ids)
+    cascade_map = build_cascade_map(service_ids, seed=CASCADE_SEED)
+
+    # Phase 6: push the topology to Neo4j once at startup. MERGE-based, so
+    # this is safe to run every time the simulator (re)starts — CASCADE_SEED
+    # being fixed means it's always writing the same graph.
+    neo4j_client = Neo4jClient(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    try:
+        neo4j_client.load_topology(registry, cascade_map)
+        print(f"[Simulator] Topology pushed to Neo4j: {len(registry)} services.")
+    finally:
+        neo4j_client.close()
 
     publisher = KafkaPublisher()
     await publisher.start()
