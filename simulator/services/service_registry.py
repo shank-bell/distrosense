@@ -1,4 +1,4 @@
-import uuid
+import hashlib
 import random
 from simulator.services.base_service import BaseService, ServiceConfig
 from simulator.config import NUM_SERVICES, SERVICE_TIERS, SERVICE_TEAMS
@@ -36,8 +36,13 @@ SERVICE_NAMES = [
 def build_registry() -> dict[str, BaseService]:
     registry = {}
     for i, name in enumerate(SERVICE_NAMES[:NUM_SERVICES]):
+        # Deterministic, name-derived id (not uuid4) so the same 100 services
+        # get the same ids on every simulator restart — required for the
+        # Neo4j MERGE in Phase 6 to actually be idempotent across runs,
+        # instead of creating duplicate nodes every time.
+        service_id = f"svc-{hashlib.md5(name.encode()).hexdigest()[:8]}"
         config = ServiceConfig(
-            service_id=f"svc-{str(uuid.uuid4())[:8]}",
+            service_id=service_id,
             name=name,
             tier=random.choice(SERVICE_TIERS),
             team=random.choice(SERVICE_TEAMS),
