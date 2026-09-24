@@ -27,12 +27,37 @@ TIMESCALE_PASSWORD = os.getenv("TIMESCALE_PASSWORD", "postgres")
 CORRELATION_HOPS = 2
 
 # How long a window of anomalies can be clustered into one incident.
-# Not in the original LLD's one-line spec — chosen because it comfortably
-# spans a few SlidingWindowJob slide intervals (30s) so a cascade has time
-# to show up downstream before we close the cluster.
-CORRELATION_WINDOW_SECONDS = 120
+# Matches flink_jobs.config.SLIDING_WINDOW_SECONDS (5 min): anomalies
+# themselves are detected over a rolling 5-minute metric window, so a
+# downstream service's anomaly can legitimately take up to that long to
+# cross its own z-score threshold after an upstream cascade starts. A
+# shorter correlation window risks closing (and losing) a cluster before
+# a slow-forming downstream anomaly ever gets the chance to fire.
+CORRELATION_WINDOW_SECONDS = 300
 
 # LLD: Granger causality (maxlag=5, p<0.05) for root cause identification
 GRANGER_MAXLAG = 5
 GRANGER_PVALUE_THRESHOLD = 0.05
+
+# Hard cap on how long a cluster can stay open regardless of activity. On a
+# dense graph, a cluster's 2-hop neighborhood can keep overlapping with
+# incoming anomalies indefinitely, continually refreshing its idle timer
+# and never going idle long enough to finalize on busy traffic. This is
+# what actually bounds a cluster's lifetime in practice — the window above
+# only matters for a cluster that goes idle well before this cap.
 CORRELATION_MAX_CLUSTER_AGE_SECONDS = 90
+
+# Minimum aligned history points before attempting a Granger test — below
+# this, results aren't meaningful (or statsmodels errors on too little data)
+GRANGER_MIN_POINTS = 15
+
+# How far back to pull metric history per service for causality testing
+GRANGER_LOOKBACK_SECONDS = 1800  # 30 minutes
+
+# Anomaly type -> metric name, used to pick each service's Granger input series
+ANOMALY_TYPE_TO_METRIC = {
+    "CPU_SPIKE":        "cpu_percent",
+    "LATENCY_BURST":    "latency_p99",
+    "ERROR_RATE_SPIKE": "error_rate",
+    "REQUEST_DROP":     "request_rate",
+}
