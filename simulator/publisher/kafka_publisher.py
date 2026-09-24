@@ -12,6 +12,8 @@ class KafkaPublisher:
             initial_capacity=10000,
             error_rate=0.001,
         )
+        self._published_count = 0
+        self._duplicate_count = 0
 
     async def start(self):
         self._producer = AIOKafkaProducer(
@@ -30,6 +32,8 @@ class KafkaPublisher:
         if self._producer:
             await self._producer.stop()
             print("[KafkaPublisher] Disconnected")
+        print(f"[KafkaPublisher] Final tally: {self._published_count} published, "
+              f"{self._duplicate_count} flagged as duplicate")
 
     async def publish(self, span: dict, service_id: str):
         if not self._producer:
@@ -37,7 +41,9 @@ class KafkaPublisher:
 
         span_id = span.get("span_id")
         if span_id and span_id in self._bloom:
-            print(f"[KafkaPublisher] Duplicate span_id {span_id} caught by Bloom filter — skipped")
+            self._duplicate_count += 1
+            print(f"[KafkaPublisher] Duplicate span_id {span_id} from service={service_id} "
+                  f"caught by Bloom filter — skipped (total duplicates so far: {self._duplicate_count})")
             return
 
         if span_id:
@@ -48,3 +54,7 @@ class KafkaPublisher:
             value=span,
             key=service_id.encode("utf-8"),
         )
+        self._published_count += 1
+        if self._published_count % 100 == 0:
+            print(f"[KafkaPublisher] Progress: {self._published_count} published, "
+                  f"{self._duplicate_count} duplicates so far")
