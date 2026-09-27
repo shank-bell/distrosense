@@ -219,7 +219,7 @@ python -m simulator.main
 - [x] Phase 3 — Ingestion (FastAPI + gRPC + Avro + Kafka producer)
 - [x] Phase 4 — Flink stream processing (dedup, watermark, tumbling/sliding windows, z-score)
 - [x] Phase 5 — ML inference (LSTM autoencoder + Isolation Forest + TorchServe + gRPC gateway)
-- [ ] Phase 6 — Correlation engine (Neo4j + BFS + Granger causality)
+- [x] Phase 6 — Correlation engine (Neo4j + BFS + Granger causality)
 - [ ] Phase 7 — Response orchestrator (YAML rules + k8s HPA + Slack + LLM runbook)
 - [ ] Phase 8 — Dashboard (React + TypeScript + WebSocket + Prometheus + Grafana)
 
