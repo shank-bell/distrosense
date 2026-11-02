@@ -8,6 +8,16 @@ SCHEMA_REGISTRY_URL = os.getenv("KAFKA_SCHEMA_REGISTRY_URL", "http://localhost:8
 
 TOPIC_RAW_TELEMETRY = "raw-telemetry"
 
+# How spans leave the simulator:
+#   grpc  - gRPC SpanBatch -> ingestion service -> validate/dedup/Avro -> Kafka  (README architecture)
+#   kafka - straight to Kafka as JSON, bypassing ingestion (debug / ingestion-less runs)
+PUBLISH_MODE = os.getenv("SIM_PUBLISH_MODE", "grpc").lower()
+INGESTION_GRPC_HOST = os.getenv("INGESTION_GRPC_HOST", "localhost")
+INGESTION_GRPC_PORT = int(os.getenv("GRPC_PORT", "50051"))
+GRPC_BATCH_MAX = 200                 # flush when this many spans are buffered...
+GRPC_BATCH_LINGER_SECONDS = 0.1      # ...or this long after the first one
+SIM_METRICS_PORT = int(os.getenv("SIM_METRICS_PORT", "9100"))
+
 NUM_SERVICES = 100
 EMIT_INTERVAL_SECONDS = 1.0
 ANOMALY_PROBABILITY = 0.05
