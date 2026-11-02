@@ -2,11 +2,13 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     url: http://prometheus:9090
     isDefault: true
 
   - name: TimescaleDB
+    uid: timescaledb
     type: postgres
     url: timescaledb:5432
     database: distrosense
