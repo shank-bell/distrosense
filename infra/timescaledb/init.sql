@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS metrics (
     is_anomaly  BOOLEAN         DEFAULT FALSE
 );
 
-SELECT create_hypertable('metrics', 'time', if_not_exists => TRUE);
+-- README: 1-day chunks (Timescale's default is 7 days).
+SELECT create_hypertable('metrics', 'time',
+                         chunk_time_interval => INTERVAL '1 day',
+                         if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS anomaly_events (
     id                    UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
