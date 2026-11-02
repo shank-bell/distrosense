@@ -35,5 +35,14 @@ kafka-topics --bootstrap-server $KAFKA_BROKER \
   --partitions 2 \
   --replication-factor $REPLICATION
 
+# Dead-letter queue: the ingestion producer routes failed sends here
+# (ingestion/producer/kafka_producer.py). Auto-create is off, so without this
+# topic a failed send to the DLQ would itself fail.
+kafka-topics --bootstrap-server $KAFKA_BROKER \
+  --create --if-not-exists \
+  --topic dead-letter-queue \
+  --partitions 2 \
+  --replication-factor $REPLICATION
+
 echo "[topic-init] All topics created. Listing:"
 kafka-topics --bootstrap-server $KAFKA_BROKER --list
