@@ -11,6 +11,8 @@ build/
 
 # Virtual environments
 .env
+.env.*
+!.env.example
 venv/
 env/
 .conda/
@@ -34,7 +36,10 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Node
+node_modules/
