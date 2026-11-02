@@ -16,13 +16,15 @@ from simulator.services.cascade_map import build_cascade_map, get_affected_servi
 from simulator.generators.metric_generator import generate_metrics
 from simulator.generators.anomaly_injector import maybe_inject
 from simulator.generators.trace_generator import generate_span
-from simulator.publisher.kafka_publisher import KafkaPublisher
+from simulator.publisher.factory import create_publisher
+from simulator.config import SIM_METRICS_PORT
+from observability.server import start_metrics_server
 from correlation.graph.neo4j_client import Neo4jClient
 
 
 async def run_service(
     service,
-    publisher: KafkaPublisher,
+    publisher,
     cascade_map: dict,
     all_services: dict,
 ):
@@ -67,7 +69,8 @@ async def main():
     finally:
         neo4j_client.close()
 
-    publisher = KafkaPublisher()
+    start_metrics_server(SIM_METRICS_PORT, "simulator")
+    publisher = create_publisher()
     await publisher.start()
 
     tasks = [
