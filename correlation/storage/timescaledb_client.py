@@ -21,9 +21,16 @@ class IncidentStore:
         self._conn.close()
 
     def save_incident(self, cluster, root_cause_result: dict) -> str:
+        try:
+            return self._save_incident(cluster, root_cause_result)
+        except Exception:
+            self._conn.rollback()   # else the aborted transaction fails every later save
+            raise
+
+    def _save_incident(self, cluster, root_cause_result: dict) -> str:
         incident_id = str(uuid.uuid4())
         member_ids = sorted(cluster.service_ids)
-        severity = max(a.get("severity", 1) for a in cluster.anomalies)
+        severity = max((a.get("severity") or 1) for a in cluster.anomalies)
 
         with self._conn.cursor() as cur:
             cur.execute(
