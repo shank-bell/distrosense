@@ -6,6 +6,12 @@ load_dotenv()
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_GROUP_ID = "correlation-engine"
+# Where the group starts when it has NO committed offset (a group that has offsets
+# always resumes from them, so restarts never lose anomalies). `earliest` because
+# anomaly-events is small and low-volume: a first start should see what was already
+# published. Flink uses `latest` for raw-telemetry — see flink_jobs/config.py.
+AUTO_OFFSET_RESET = os.getenv("CORRELATION_AUTO_OFFSET_RESET", "earliest")
+METRICS_PORT = int(os.getenv("CORRELATION_METRICS_PORT", "9102"))
 
 TOPIC_ANOMALY_EVENTS  = "anomaly-events"
 TOPIC_INCIDENT_ALERTS = "incident-alerts"
