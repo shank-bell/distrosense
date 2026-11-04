@@ -3,8 +3,10 @@ import time
 from kafka import KafkaConsumer
 from correlation.config import (
     KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID, TOPIC_ANOMALY_EVENTS,
-    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD,
+    NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, AUTO_OFFSET_RESET, METRICS_PORT,
 )
+from correlation import metrics as M
+from observability.server import start_metrics_server
 from correlation.graph.neo4j_client import Neo4jClient
 from correlation.clustering.incident_clusterer import IncidentClusterer
 from correlation.causality.granger_engine import GrangerEngine
@@ -16,14 +18,24 @@ FINALIZE_CHECK_INTERVAL_SECONDS = 10
 
 def _check_finalized(clusterer, granger, store, publisher):
     for cluster in clusterer.pop_finalized():
-        services = sorted(cluster.service_ids)
-        root_cause_result = granger.find_root_cause(cluster)
-        incident_id = store.save_incident(cluster, root_cause_result)
-        publisher.publish(incident_id, cluster, root_cause_result)
-        print(f"[CorrelationEngine] Incident {incident_id[:8]} saved: "
-              f"{len(cluster.anomalies)} anomalies across {len(services)} services: {services}, "
-              f"root cause={root_cause_result['root_cause_service_id']} "
-              f"(method={root_cause_result['method']})")
+        incident_id = None
+        try:
+            services = sorted(cluster.service_ids)
+            root_cause_result = granger.find_root_cause(cluster)
+            incident_id = store.save_incident(cluster, root_cause_result)
+            publisher.publish(incident_id, cluster, root_cause_result)
+            M.INCIDENTS.labels(root_cause_result["method"]).inc()
+            print(f"[CorrelationEngine] Incident {incident_id[:8]} saved: "
+                  f"{len(cluster.anomalies)} anomalies across {len(services)} services: {services}, "
+                  f"root cause={root_cause_result['root_cause_service_id']} "
+                  f"(method={root_cause_result['method']})")
+        except Exception as e:
+            M.FINALIZE_FAILURES.labels("publish" if incident_id else "save").inc()
+            # One failing cluster must not crash the engine and throw away every
+            # other in-memory cluster. Say which half of save->publish failed.
+            where = (f"incident {incident_id[:8]} was saved but NOT published"
+                     if incident_id else "cluster dropped before it could be saved")
+            print(f"[CorrelationEngine] {where}: {type(e).__name__}: {e}")
 
 
 def run():
@@ -39,10 +51,12 @@ def run():
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
         group_id=KAFKA_GROUP_ID,
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-        auto_offset_reset="latest",
+        auto_offset_reset=AUTO_OFFSET_RESET,
         consumer_timeout_ms=1000,
     )
 
+    start_metrics_server(METRICS_PORT, "correlation")
+    M.OPEN_CLUSTERS.set_function(clusterer.open_cluster_count)
     print("[CorrelationEngine] Listening on anomaly-events...")
     last_check = time.time()
     try:
@@ -50,6 +64,7 @@ def run():
             for msg in consumer:
                 anomaly = msg.value
                 clusterer.add_anomaly(anomaly)
+                M.ANOMALIES_INGESTED.inc()
                 print(f"[CorrelationEngine] Anomaly ingested: "
                       f"{anomaly['service_id']} ({anomaly['anomaly_type']})")
 
