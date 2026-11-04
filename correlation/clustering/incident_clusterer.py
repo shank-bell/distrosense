@@ -1,4 +1,5 @@
 import time
+from collections import deque
 from typing import Dict, List, Set
 from correlation.graph.neo4j_client import Neo4jClient
 from correlation.config import CORRELATION_HOPS, CORRELATION_WINDOW_SECONDS, CORRELATION_MAX_CLUSTER_AGE_SECONDS
@@ -60,16 +61,39 @@ class IncidentClusterer:
             self._related_cache[service_id] = related
         return self._related_cache[service_id]
 
+    def open_cluster_count(self) -> int:
+        return len(self._active_clusters)
+
+    def _connected_clusters(self, service_id: str, eligible: List[Cluster]) -> List[Cluster]:
+        """
+        BFS connected component over the service graph. Nodes are the services
+        that currently have an open anomaly (plus the new one); two nodes are
+        adjacent when one is within CORRELATION_HOPS of the other in Neo4j.
+        Starting from the new anomaly's service, breadth-first search collects
+        every active service in its connected component, and the result is
+        every open cluster that owns one of them — those all merge into one
+        incident (cluster order is preserved, so the oldest absorbs the rest).
+        """
+        owner = {sid: c for c in eligible for sid in c.service_ids}
+        visited = {service_id}
+        frontier = deque([service_id])
+        while frontier:
+            service = frontier.popleft()
+            for neighbour in self._related(service):
+                if neighbour in owner and neighbour not in visited:
+                    visited.add(neighbour)
+                    frontier.append(neighbour)
+        hit = {id(owner[s]) for s in visited if s in owner}
+        return [c for c in eligible if id(c) in hit]
+
     def add_anomaly(self, anomaly: dict) -> None:
         now = anomaly["detected_at"] / 1000.0
-        neighborhood = self._related(anomaly["service_id"])
-
-        matching = [
+        eligible = [
             c for c in self._active_clusters
             if (now - c.last_updated) <= CORRELATION_WINDOW_SECONDS
             and (now - c.created_at) < CORRELATION_MAX_CLUSTER_AGE_SECONDS
-            and (c.service_ids & neighborhood)
         ]
+        matching = self._connected_clusters(anomaly["service_id"], eligible)
 
         if not matching:
             self._active_clusters.append(Cluster(anomaly))
