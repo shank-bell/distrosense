@@ -1,0 +1,43 @@
+# LLD 8.2: YAML-defined rule set. Rules are evaluated in the order they
+# appear here (= priority order); the first rule whose condition matches
+# executes, and no further rules are checked for that incident.
+#
+# condition fields (all optional; an empty condition matches everything):
+#   min_severity:         incident.severity must be >= this
+#   anomaly_types:         incident must have at least one anomaly_type in this list
+#   min_member_services:   incident must span at least this many services
+#
+# actions (any combination):
+#   trigger_hpa       - scale up the root-cause service's HPA (real k8s call
+#                        if it has a deployed Rollout, otherwise skipped)
+#   rollback_canary   - abort the root-cause service's Argo Rollout
+#   post_slack        - post a structured incident summary to Slack
+#   generate_runbook  - call the LLM to generate remediation guidance,
+#                        included in the Slack message
+
+rules:
+  - name: critical_multi_service_cascade
+    condition:
+      min_severity: 4
+      min_member_services: 3
+    actions: [trigger_hpa, rollback_canary, post_slack, generate_runbook]
+
+  - name: critical_single_service
+    condition:
+      min_severity: 4
+    actions: [trigger_hpa, post_slack, generate_runbook]
+
+  - name: cpu_saturation
+    condition:
+      anomaly_types: [CPU_SPIKE]
+      min_severity: 3
+    actions: [trigger_hpa, post_slack]
+
+  - name: moderate_incident
+    condition:
+      min_severity: 2
+    actions: [post_slack]
+
+  - name: default_low_severity
+    condition: {}
+    actions: [post_slack]
