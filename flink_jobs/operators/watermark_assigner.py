@@ -1,23 +1,27 @@
-import time
-from flink_jobs.config import WATERMARK_LAG_SECONDS
+from pyflink.common import Duration, WatermarkStrategy
+from pyflink.common.watermark_strategy import TimestampAssigner
+
+from flink_jobs.config import SOURCE_IDLENESS_SECONDS, WATERMARK_LAG_SECONDS
 
 
-class BoundedOutOfOrdernessWatermark:
+class SpanTimestampAssigner(TimestampAssigner):
+    """Event time = the span's own timestamp (ms since epoch), not Kafka's append time."""
+
+    def extract_timestamp(self, value, record_timestamp) -> int:
+        return value.timestamp
+
+
+def build_watermark_strategy() -> WatermarkStrategy:
     """
-    LLD: BoundedOutOfOrderness(5s)
-    Allows events up to 5 seconds late before closing a window.
-    Events older than (max_seen_ts - lag) are considered late and dropped.
+    LLD: BoundedOutOfOrderness(5s) — the watermark trails the highest timestamp
+    seen by 5 seconds, so a window closes 5s after its end and anything later
+    than that is late (the window operators send it to a side output).
+
+    with_idleness: a parallel instance that receives no events for a while stops
+    holding the watermark back, otherwise one idle Kafka partition would stall
+    every window.
     """
-    def __init__(self):
-        self._max_seen_ts = 0
-        self._lag_ms = WATERMARK_LAG_SECONDS * 1000
-
-    def update(self, event_timestamp_ms: int):
-        if event_timestamp_ms > self._max_seen_ts:
-            self._max_seen_ts = event_timestamp_ms
-
-    def current_watermark(self) -> int:
-        return self._max_seen_ts - self._lag_ms
-
-    def is_late(self, event_timestamp_ms: int) -> bool:
-        return event_timestamp_ms < self.current_watermark()
+    return (WatermarkStrategy
+            .for_bounded_out_of_orderness(Duration.of_seconds(WATERMARK_LAG_SECONDS))
+            .with_timestamp_assigner(SpanTimestampAssigner())
+            .with_idleness(Duration.of_seconds(SOURCE_IDLENESS_SECONDS)))
