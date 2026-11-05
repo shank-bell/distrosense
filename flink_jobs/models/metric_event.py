@@ -20,7 +20,10 @@ class MetricEvent:
         # The simulator's spans nest all four readings under "metrics"
         # (see trace_generator.py's generate_span) — this used to look
         # for cpu_percent etc. at the top level and always got 0.0.
-        metrics = d.get("metrics", {})
+        # JSON spans (SIM_PUBLISH_MODE=kafka) nest the readings under "metrics";
+        # Avro records from the ingestion service are flat, with the same four
+        # names at the top level. `or d` handles both.
+        metrics = d.get("metrics") or d
         return MetricEvent(
             trace_id     = d.get("trace_id", ""),
             span_id      = d.get("span_id", ""),
