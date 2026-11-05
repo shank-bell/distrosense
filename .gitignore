@@ -43,3 +43,6 @@ Thumbs.db
 
 # Node
 node_modules/
+
+# Flink local state (only created when the job runs outside Docker)
+/.flink-state/
