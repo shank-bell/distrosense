@@ -15,6 +15,12 @@ SELECT create_hypertable('metrics', 'time',
                          chunk_time_interval => INTERVAL '1 day',
                          if_not_exists => TRUE);
 
+-- Flink's side effects are at-least-once (a task restarted from a checkpoint re-fires its
+-- windows), so the window writer must be idempotent: this unique index makes a replayed
+-- window's INSERT ... ON CONFLICT DO NOTHING a no-op. (Includes `time`, as hypertables require.)
+CREATE UNIQUE INDEX IF NOT EXISTS metrics_time_service_metric_uq
+    ON metrics (time, service_id, metric_name);
+
 CREATE TABLE IF NOT EXISTS anomaly_events (
     id                    UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     detected_at           TIMESTAMPTZ     NOT NULL,
