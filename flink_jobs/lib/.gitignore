@@ -1,0 +1,4 @@
+# Connector JARs are downloaded by flink_jobs/fetch_jars.py, never committed.
+*.jar
+*.jar.part
+!.gitignore
