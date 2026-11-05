@@ -1,0 +1,9 @@
+# Used by `docker build -f flink_jobs/Dockerfile .` (BuildKit reads <Dockerfile>.dockerignore).
+# Keep the build context to the three packages the job imports.
+**
+!flink_jobs
+!common
+!observability
+**/__pycache__
+**/*.pyc
+flink_jobs/lib/*.jar
