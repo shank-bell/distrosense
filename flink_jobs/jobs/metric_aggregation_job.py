@@ -1,117 +1,32 @@
-import json
-import time
-import datetime
-import numpy as np
-from collections import defaultdict, deque
-from kafka import KafkaConsumer
-from flink_jobs.config import (
-    KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID,
-    TOPIC_RAW_TELEMETRY, TUMBLING_WINDOW_SECONDS,
-)
-from flink_jobs.models.metric_event import MetricEvent
-from flink_jobs.operators.deduplication_filter import DeduplicationFilter
-from flink_jobs.operators.watermark_assigner import BoundedOutOfOrdernessWatermark
-from flink_jobs.sinks.timescaledb_sink import TimescaleDBSink
-from flink_jobs.sinks.kafka_sink import KafkaSink
+from pyflink.common import Time, Types
+from pyflink.datastream import OutputTag
+from pyflink.datastream.window import TumblingEventTimeWindows
+
+from flink_jobs.config import TOPIC_AGGREGATED, TUMBLING_WINDOW_SECONDS, TXN_PREFIX_AGGREGATED
+from flink_jobs.operators.window_aggregator import MetricAggregationWindow
+from flink_jobs.sinks.kafka_sink import build_kafka_sink
+
+LATE_TUMBLING = OutputTag("late-tumbling", Types.PICKLED_BYTE_ARRAY())
 
 
 class MetricAggregationJob:
     """
     LLD: TumblingEventTimeWindows(60s)
-    AggregateFunction: mean, p99, max
-    Output: MetricAggregate → TimescaleDB + aggregated-metrics topic
+    ProcessWindowFunction: mean, p99, max per service
+    Output: MetricAggregate -> TimescaleDB (inside the window function) +
+            aggregated-metrics topic (exactly-once Kafka sink)
     """
-    def __init__(self):
-        self._dedup      = DeduplicationFilter()
-        self._watermark  = BoundedOutOfOrdernessWatermark()
-        self._tsdb_sink  = TimescaleDBSink()
-        self._kafka_sink = KafkaSink()
-        # Per service: deque of events in current tumbling window
-        self._windows: dict[str, list] = defaultdict(list)
-        self._window_start: dict[str, int] = {}
 
-    def run(self):
-        consumer = KafkaConsumer(
-            TOPIC_RAW_TELEMETRY,
-            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-            group_id=KAFKA_GROUP_ID + "-aggregation",
-            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
-            auto_offset_reset="latest",
-        )
-
-        self._tsdb_sink.open()
-        self._kafka_sink.open()
-        print("[MetricAggregationJob] Running tumbling window aggregation...")
-
-        try:
-            for msg in consumer:
-                event_dict = msg.value
-                span_id    = event_dict.get("span_id", "")
-                ts_ms      = event_dict.get("timestamp", int(time.time() * 1000))
-
-                # Step 1: Dedup check (Bloom filter + dict)
-                if self._dedup.is_duplicate(span_id):
-                    continue
-
-                # Step 2: Watermark check — drop late events
-                self._watermark.update(ts_ms)
-                if self._watermark.is_late(ts_ms):
-                    continue
-
-                event      = MetricEvent.from_dict(event_dict)
-                service_id = event.service_id
-
-                # Step 3: keyBy(service_id) — assign to window bucket
-                if service_id not in self._window_start:
-                    self._window_start[service_id] = ts_ms
-
-                self._windows[service_id].append(event)
-
-                # Step 4: Check if tumbling window closed (60s)
-                window_age_ms = ts_ms - self._window_start[service_id]
-                if window_age_ms >= TUMBLING_WINDOW_SECONDS * 1000:
-                    self._flush_window(service_id, ts_ms)
-
-                # Periodic TTL eviction
-                self._dedup.evict_expired()
-
-        finally:
-            self._tsdb_sink.close()
-            self._kafka_sink.close()
-
-    def _flush_window(self, service_id: str, ts_ms: int):
-        events = self._windows[service_id]
-        if not events:
-            return
-
-        cpu_vals    = [e.cpu_percent  for e in events]
-        lat_vals    = [e.latency_p99  for e in events]
-        err_vals    = [e.error_rate   for e in events]
-        req_vals    = [e.request_rate for e in events]
-
-        aggregate = {
-            "service_id":        service_id,
-            "window_start_ms":   self._window_start[service_id],
-            "window_end_ms":     ts_ms,
-            "cpu_mean":          float(np.mean(cpu_vals)),
-            "cpu_max":           float(np.max(cpu_vals)),
-            "latency_p99":       float(np.percentile(lat_vals, 99)),
-            "latency_mean":      float(np.mean(lat_vals)),
-            "error_rate_mean":   float(np.mean(err_vals)),
-            "request_rate_mean": float(np.mean(req_vals)),
-            "span_count":        len(events),
-        }
-
-        # Write to TimescaleDB — ONE call with the full aggregate. The old
-        # version looped over 4 metric names calling write_metric() 4 times
-        # with mismatched key names, silently writing mostly-zero rows.
-        ts_iso = datetime.datetime.utcfromtimestamp(ts_ms / 1000).isoformat()
-        self._tsdb_sink.write_metric({**aggregate, "timestamp_iso": ts_iso})
-
-        # Write to aggregated-metrics topic
-        self._kafka_sink.write_aggregate(aggregate)
-
-        # Reset window
-        self._windows[service_id] = []
-        self._window_start[service_id] = ts_ms
-        print(f"[MetricAggregationJob] Flushed window for {service_id} — {len(events)} events")
+    @staticmethod
+    def attach(keyed_stream):
+        """Wire this branch onto the keyBy(service_id) stream; returns the late-event side output."""
+        windowed = (keyed_stream
+                    .window(TumblingEventTimeWindows.of(Time.seconds(TUMBLING_WINDOW_SECONDS)))
+                    .side_output_late_data(LATE_TUMBLING))
+        aggregates = (windowed
+                      .process(MetricAggregationWindow(), output_type=Types.STRING())
+                      .name("tumbling-60s-aggregate").uid("tumbling-60s-aggregate"))
+        (aggregates
+         .sink_to(build_kafka_sink(TOPIC_AGGREGATED, TXN_PREFIX_AGGREGATED))
+         .name("kafka-aggregated-metrics").uid("kafka-aggregated-metrics"))
+        return aggregates.get_side_output(LATE_TUMBLING)
