@@ -2,7 +2,9 @@ global:
   scrape_interval: 15s
 
 # The DistroSense stages run on the host (python -m ...), not inside compose, so
-# Prometheus (a container) reaches them through host.docker.internal.
+# Prometheus (a container) reaches them through host.docker.internal. The one exception is
+# the PyFlink job (compose service `flink`), whose metrics port 9101 is published to the
+# host, so the same host.docker.internal:9101 target reaches it.
 # Ports: ingestion 8000 (/metrics on the REST app), simulator 9100, flink jobs 9101,
 # correlation 9102, orchestrator 9103.
 scrape_configs:
