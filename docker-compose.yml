@@ -11,6 +11,7 @@ volumes:
   redis_data:
   kafka_data:
   zookeeper_data:
+  flink_state:
 
 services:
 
@@ -38,6 +39,10 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      # Flink's exactly-once Kafka sinks use transactions; on a single broker the transaction
+      # log must be created with replication factor 1 (the default of 3 can never be satisfied).
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     volumes:
       - kafka_data:/var/lib/kafka/data
@@ -110,6 +115,34 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+
+  # The PyFlink job (flink_jobs/). It sits behind a profile so a plain `docker compose up`
+  # does not start it (JVM + Python workers need ~2 GB):
+  #   docker compose --profile flink up -d --build flink
+  flink:
+    profiles: ["flink"]
+    build:
+      context: .
+      dockerfile: flink_jobs/Dockerfile
+    image: distrosense-flink
+    container_name: flink-jobs
+    networks: [distrosense]
+    depends_on: [kafka, schema-registry, timescaledb, redis]
+    mem_limit: 2200m
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      TIMESCALE_HOST: timescaledb
+      REDIS_HOST: redis
+      FLINK_STATE_DIR: /state
+      FLINK_PARALLELISM: ${FLINK_PARALLELISM:-1}
+      FLINK_AUTO_OFFSET_RESET: ${FLINK_AUTO_OFFSET_RESET:-latest}
+    ports:
+      - "9101:9101"   # Prometheus metrics (scraped as host.docker.internal:9101)
+      - "8082:8082"   # Flink Web UI
+    volumes:
+      - flink_state:/state
+    restart: on-failure:3
 
   prometheus:
     image: prom/prometheus:latest
