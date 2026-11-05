@@ -1,6 +1,5 @@
-import json
 import time
-from kafka import KafkaConsumer
+from common.kafka_consumer import JsonConsumer
 from correlation.config import (
     KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID, TOPIC_ANOMALY_EVENTS,
     NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, AUTO_OFFSET_RESET, METRICS_PORT,
@@ -46,13 +45,14 @@ def run():
     publisher = IncidentPublisher()
     publisher.open()
 
-    consumer = KafkaConsumer(
-        TOPIC_ANOMALY_EVENTS,
-        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-        group_id=KAFKA_GROUP_ID,
-        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+    # read_committed: anomaly-events is written by Flink's exactly-once (transactional) sink,
+    # which kafka-python cannot read correctly — see common/kafka_consumer.py.
+    consumer = JsonConsumer(
+        [TOPIC_ANOMALY_EVENTS],
+        KAFKA_BOOTSTRAP_SERVERS,
+        KAFKA_GROUP_ID,
         auto_offset_reset=AUTO_OFFSET_RESET,
-        consumer_timeout_ms=1000,
+        name="CorrelationConsumer",
     )
 
     start_metrics_server(METRICS_PORT, "correlation")
@@ -61,8 +61,9 @@ def run():
     last_check = time.time()
     try:
         while True:
-            for msg in consumer:
-                anomaly = msg.value
+            record = consumer.poll(1.0)
+            if record is not None:
+                anomaly = record.value
                 clusterer.add_anomaly(anomaly)
                 M.ANOMALIES_INGESTED.inc()
                 print(f"[CorrelationEngine] Anomaly ingested: "
@@ -71,13 +72,14 @@ def run():
                 if time.time() - last_check >= FINALIZE_CHECK_INTERVAL_SECONDS:
                     _check_finalized(clusterer, granger, store, publisher)
                     last_check = time.time()
-
-            # consumer went quiet for 1s — also a good moment to check
-            _check_finalized(clusterer, granger, store, publisher)
-            last_check = time.time()
+            else:
+                # consumer went quiet for 1s — also a good moment to check
+                _check_finalized(clusterer, granger, store, publisher)
+                last_check = time.time()
     except KeyboardInterrupt:
         print("[CorrelationEngine] Shutting down...")
     finally:
+        consumer.close()
         neo4j_client.close()
         granger.close()
         store.close()
